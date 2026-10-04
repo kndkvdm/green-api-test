@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GREEN-API Test Page</title>
+  <style>
+    :root {
+      --background: #f4f6f5;
+      --panel: #ffffff;
+      --border: #cfd6d2;
+      --text: #1d2420;
+      --muted: #6b7570;
+      --accent: #2a9d5c;
+      --accent-hover: #23854e;
+      --error: #c0392b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 24px;
+      max-width: 1100px;
+      margin: 40px auto;
+      padding: 0 16px;
+    }
+    .controls { display: flex; flex-direction: column; gap: 28px; }
+    .group { display: flex; flex-direction: column; gap: 8px; }
+    input, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+    textarea { min-height: 70px; resize: vertical; }
+    input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    button {
+      padding: 12px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--accent);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .hint { color: var(--muted); font-size: 12px; }
+    .response { display: flex; flex-direction: column; gap: 8px; }
+    .response h2 { margin: 0; font-size: 18px; font-weight: 600; }
+    #output {
+      flex: 1;
+      min-height: 560px;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--panel);
+      white-space: pre;
+    }
+    #output.is-error { border-color: var(--error); color: var(--error); }
+    @media (max-width: 760px) {
+      .layout { grid-template-columns: 1fr; margin: 16px auto; }
+      #output { min-height: 320px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="layout">
+    <section class="controls">
+      <div class="group">
+        <input id="idInstance" placeholder="idInstance" autocomplete="off">
+        <input id="apiTokenInstance" placeholder="ApiTokenInstance" autocomplete="off">
+        <input id="apiUrl" placeholder="apiUrl" value="https://api.green-api.com">
+        <span class="hint">apiUrl — из личного кабинета GREEN-API (по умолчанию api.green-api.com)</span>
+      </div>
+
+      <div class="group">
+        <button data-method="getSettings">getSettings</button>
+        <button data-method="getStateInstance">getStateInstance</button>
+      </div>
+
+      <div class="group">
+        <input id="messagePhone" placeholder="77771234567" inputmode="numeric">
+        <textarea id="messageText" placeholder="Hello World!"></textarea>
+        <button data-method="sendMessage">sendMessage</button>
+      </div>
+
+      <div class="group">
+        <input id="filePhone" placeholder="77771234567" inputmode="numeric">
+        <input id="fileUrl" placeholder="https://my.site.com/img/horse.png">
+        <button data-method="sendFileByUrl">sendFileByUrl</button>
+      </div>
+    </section>
+
+    <section class="response">
+      <h2>Ответ:</h2>
+      <textarea id="output" readonly></textarea>
+    </section>
+  </main>
+
+  <script>
+    const output = document.getElementById('output');
+
+    function readField(id) {
+      return document.getElementById(id).value.trim();
+    }
+
+    // Phone number -> GREEN-API chat id ("77771234567" -> "77771234567@c.us").
+    function toChatId(phone) {
+      const digits = phone.replace(/\D/g, '');
+      if (!digits) throw new Error('Укажите номер телефона (только цифры, с кодом страны).');
+      return digits + '@c.us';
+    }
+
+    // "https://my.site.com/img/horse.png" -> "horse.png"
+    function fileNameFromUrl(fileUrl) {
+      let path;
+      try {
+        path = new URL(fileUrl).pathname;
+      } catch {
+        throw new Error('Некорректная ссылка на файл.');
+      }
+      const lastSegment = decodeURIComponent(path.split('/').pop());
+      return lastSegment || 'file';
+    }
+
+    // Each method: HTTP verb + optional JSON body built from the form.
+    const methods = {
+      getSettings: () => ({ httpMethod: 'GET' }),
+      getStateInstance: () => ({ httpMethod: 'GET' }),
+      sendMessage: () => {
+        const message = readField('messageText');
+        if (!message) throw new Error('Введите текст сообщения.');
+        return {
+          httpMethod: 'POST',
+          body: { chatId: toChatId(readField('messagePhone')), message },
+        };
+      },
+      sendFileByUrl: () => {
+        const urlFile = readField('fileUrl');
+        if (!urlFile) throw new Error('Укажите ссылку на файл.');
+        return {
+          httpMethod: 'POST',
+          body: {
+            chatId: toChatId(readField('filePhone')),
+            urlFile,
+            fileName: fileNameFromUrl(urlFile),
+          },
+        };
+      },
+    };
+
+    function show(data, isError) {
+      output.value = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      output.classList.toggle('is-error', Boolean(isError));
+    }
+
+    async function callMethod(methodName, button) {
+      // 1. Connection parameters.
+      const idInstance = readField('idInstance');
+      const apiTokenInstance = readField('apiTokenInstance');
+      const apiUrl = (readField('apiUrl') || 'https://api.green-api.com').replace(/\/+$/, '');
+      if (!idInstance || !apiTokenInstance) {
+        show('Введите idInstance и ApiTokenInstance.', true);
+        return;
+      }
+
+      // 2. Method-specific request.
+      let request;
+      try {
+        request = methods[methodName]();
+      } catch (validationError) {
+        show(validationError.message, true);
+        return;
+      }
+
+      // 3. Call GREEN-API and print the answer.
+      const url = `${apiUrl}/waInstance${encodeURIComponent(idInstance)}/${methodName}/${encodeURIComponent(apiTokenInstance)}`;
+      const options = { method: request.httpMethod };
+      if (request.body) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(request.body);
+      }
+
+      button.disabled = true;
+      show('Загрузка...');
+      try {
+        const response = await fetch(url, options);
+        const text = await response.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = text || '(пустой ответ)';
+        }
+        if (response.ok) {
+          show(payload, false);
+        } else {
+          show({ status: response.status, statusText: response.statusText, response: payload }, true);
+        }
+      } catch (networkError) {
+        show('Ошибка сети: ' + networkError.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.querySelectorAll('button[data-method]').forEach((button) => {
+      button.addEventListener('click', () => callMethod(button.dataset.method, button));
+    });
+  </script>
+</body>
+</html>
